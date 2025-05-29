@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F # Used for GLU
 import math
+from einops import rearrange, repeat
 import numpy as np
 
 # Assuming 'add_coord_dim' is defined in models.utils
@@ -690,3 +691,159 @@ class CustomRotationalEmbedding1D(nn.Module):
         pe = torch.repeat_interleave(pe.unsqueeze(0), x.size(0), 0)
         return pe.transpose(1, 2) # Transpose for compatibility with other backbones
     
+class EMGSelfAttentionBackbone(nn.Module):
+    """
+    Custom backbone for EMG CWT features using self-attention across channels
+
+    Input: CWT features of shape (batch, channels=4, freq_bins, time_steps)
+    Output: d_input dimensional vector for CTM processing
+    """
+
+    def __init__(self,
+                 n_channels=4,
+                 freq_bins=32,
+                 time_steps=128,
+                 d_model=256,        # Internal embedding dimension
+                 d_input=512,        # Output dimension for CTM
+                 n_heads=8,          # Multi-head attention
+                 n_layers=2,         # Number of self-attention layers
+                 dropout=0.1):
+
+        super().__init__()
+
+        self.n_channels = n_channels
+        self.freq_bins = freq_bins
+        self.time_steps = time_steps
+        self.d_model = d_model
+        self.d_input = d_input
+
+        # Step 1: Project each channel's CWT features to d_model
+        self.channel_projection = nn.Linear(freq_bins * time_steps, d_model)
+
+        # Step 2: Learnable channel embeddings (like positional embeddings)
+        self.channel_embeddings = nn.Parameter(torch.randn(n_channels, d_model))
+
+        # Step 3: Self-attention across channels
+        self.attention_layers = nn.ModuleList([
+            ChannelAttentionBlock(d_model, n_heads, dropout)
+            for _ in range(n_layers)
+        ])
+
+        # Step 4: Final projection to CTM input dimension
+        self.output_projection = nn.Sequential(
+            nn.Linear(n_channels * d_model, d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, d_input),
+            nn.LayerNorm(d_input)
+        )
+
+        # Alternative: Use attention pooling instead of simple flattening
+        self.use_attention_pooling = True
+        if self.use_attention_pooling:
+            self.attention_pool = AttentionPooling(d_model, d_input)
+
+    def forward(self, cwt_features):
+        """
+        Args:
+            cwt_features: (batch, channels, freq_bins, time_steps)
+        Returns:
+            features: (batch, d_input) for CTM processing
+        """
+        batch_size = cwt_features.shape[0]
+
+        # Step 1: Flatten and project each channel
+        # (batch, channels, freq_bins, time_steps) -> (batch, channels, freq_bins * time_steps)
+        channel_features = rearrange(cwt_features, 'b c f t -> b c (f t)')
+
+        # Project each channel to d_model dimension
+        # (batch, channels, freq_bins * time_steps) -> (batch, channels, d_model)
+        channel_embeddings = self.channel_projection(channel_features)
+
+        # Step 2: Add learnable channel embeddings
+        # Broadcast channel embeddings across batch
+        channel_emb = repeat(self.channel_embeddings, 'c d -> b c d', b=batch_size)
+        channel_embeddings = channel_embeddings + channel_emb
+
+        # Step 3: Self-attention across channels
+        # Treat channels as sequence tokens for self-attention
+        attended_features = channel_embeddings
+        for attention_layer in self.attention_layers:
+            attended_features = attention_layer(attended_features)
+
+        # Step 4: Pool to final representation
+        if self.use_attention_pooling:
+            # Use learned attention pooling
+            features = self.attention_pool(attended_features)
+        else:
+            # Simple flattening + projection
+            features = rearrange(attended_features, 'b c d -> b (c d)')
+            features = self.output_projection(features)
+
+        return features
+
+class ChannelAttentionBlock(nn.Module):
+    """Self-attention block for processing EMG channels"""
+
+    def __init__(self, d_model, n_heads, dropout=0.1):
+        super().__init__()
+
+        self.self_attention = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
+        self.feed_forward = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(4 * d_model, d_model)
+        )
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, channels, d_model)
+        Returns:
+            output: (batch, channels, d_model)
+        """
+        # Self-attention across channels
+        attended, _ = self.self_attention(x, x, x)
+        x = self.norm1(x + self.dropout(attended))
+
+        # Feed-forward
+        ff_output = self.feed_forward(x)
+        x = self.norm2(x + self.dropout(ff_output))
+
+        return x
+
+class AttentionPooling(nn.Module):
+    """Attention-based pooling to aggregate channel information"""
+
+    def __init__(self, d_model, d_output):
+        super().__init__()
+
+        self.attention_weights = nn.Linear(d_model, 1)
+        self.output_projection = nn.Linear(d_model, d_output)
+        self.layer_norm = nn.LayerNorm(d_output)
+
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, channels, d_model)
+        Returns:
+            pooled: (batch, d_output)
+        """
+        # Compute attention weights for each channel
+        weights = self.attention_weights(x)  # (batch, channels, 1)
+        weights = F.softmax(weights, dim=1)   # Normalize across channels
+
+        # Weighted average of channels
+        pooled = torch.sum(x * weights, dim=1)  # (batch, d_model)
+
+        # Final projection
+        output = self.layer_norm(self.output_projection(pooled))
+
+        return output

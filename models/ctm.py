@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import math
 
-from models.modules import ParityBackbone, SynapseUNET, Squeeze, SuperLinear, LearnableFourierPositionalEncoding, MultiLearnableFourierPositionalEncoding, CustomRotationalEmbedding, CustomRotationalEmbedding1D, ShallowWide
+from models.modules import ParityBackbone, SynapseUNET, Squeeze, SuperLinear, LearnableFourierPositionalEncoding, MultiLearnableFourierPositionalEncoding, CustomRotationalEmbedding, CustomRotationalEmbedding1D, ShallowWide, EMGSelfAttentionBackbone
 from models.resnet import prepare_resnet_backbone
 from models.utils import compute_normalized_entropy
 
@@ -222,11 +222,30 @@ class ContinuousThoughtMachine(nn.Module):
         """
         Compute the key-value features from the input data using the backbone. 
         """
-        initial_rgb = self.initial_rgb(x)
-        self.kv_features = self.backbone(initial_rgb)
-        pos_emb = self.positional_embedding(self.kv_features)
-        combined_features = (self.kv_features + pos_emb).flatten(2).transpose(1, 2)
-        kv = self.kv_proj(combined_features)
+        if self.backbone_type == 'emg_self_attention':
+        # For EMG: x is already CWT features (batch, 4, 32, 128)
+        # Skip initial_rgb processing for EMG data
+        self.kv_features = self.backbone(x)  # (batch, 512)
+        
+            # Handle positional embedding (likely 'none' for EMG)
+            if self.positional_embedding_type != 'none':
+                pos_emb = self.positional_embedding(self.kv_features)
+                combined_features = self.kv_features + pos_emb
+            else:
+                combined_features = self.kv_features
+                
+            # Reshape for attention: EMG backbone outputs (batch, 512)
+            # Need to add sequence dimension for attention
+            kv = combined_features.unsqueeze(1)  # (batch, 1, 512)
+            kv = self.kv_proj(kv)  # (batch, 1, d_input)
+        
+        else:
+            # Original image processing pipeline
+            initial_rgb = self.initial_rgb(x)
+            self.kv_features = self.backbone(initial_rgb)
+            pos_emb = self.positional_embedding(self.kv_features)
+            combined_features = (self.kv_features + pos_emb).flatten(2).transpose(1, 2)
+            kv = self.kv_proj(combined_features)
         return kv
 
     def compute_certainty(self, current_prediction):
@@ -251,9 +270,11 @@ class ContinuousThoughtMachine(nn.Module):
         doesn't hurt the model in any way that we can tell.
         """
         if 'resnet' in self.backbone_type:
-            self.initial_rgb = nn.LazyConv2d(3, 1, 1) # Adapts input channels lazily
-        else:
-            self.initial_rgb = nn.Identity()
+        self.initial_rgb = nn.LazyConv2d(3, 1, 1) # Adapts input channels lazily
+    elif self.backbone_type == 'emg_self_attention':
+        self.initial_rgb = nn.Identity()  # EMG doesn't need RGB conversion
+    else:
+        self.initial_rgb = nn.Identity()
 
     def get_d_backbone(self):
         """
@@ -261,6 +282,8 @@ class ContinuousThoughtMachine(nn.Module):
 
         This is a little bit complicated for resnets, but the logic should be easy enough to read below.        
         """
+        if self.backbone_type == 'emg_self_attention':
+            return 512
         if self.backbone_type == 'shallow-wide':
             return 2048
         elif self.backbone_type == 'parity_backbone':
@@ -289,6 +312,17 @@ class ContinuousThoughtMachine(nn.Module):
         """
         Set the backbone module based on the specified type.
         """
+        if self.backbone_type == 'emg_self_attention':
+        self.backbone = EMGSelfAttentionBackbone(
+            n_channels=4,
+            freq_bins=32, 
+            time_steps=128,
+            d_model=256,
+            d_input=self.get_d_backbone(),
+            n_heads=8,
+            n_layers=2,
+            dropout=0.1
+        )
         if self.backbone_type == 'shallow-wide':
             self.backbone = ShallowWide()
         elif self.backbone_type == 'parity_backbone':
