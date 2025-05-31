@@ -29,7 +29,7 @@ def butter_bandpass(data: np.ndarray, lowcut: float, highcut: float,
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, data)
 
-def preprocess_emg_data(emg_file: str, cfg:dict, sr: int = 250) -> np.ndarray:
+def preprocess_emg_data(emg_file: str, cfg, sr: int = 250) -> np.ndarray:
     """Preprocess EMG data with filtering and artifact removal"""
     # Load EMG data
     data = np.loadtxt(emg_file, delimiter=',')
