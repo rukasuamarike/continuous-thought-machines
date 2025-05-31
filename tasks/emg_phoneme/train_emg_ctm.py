@@ -6,7 +6,7 @@ import json
 
 from tasks.emg_phoneme.config import EMG_CTM_CONFIG, EMG_BACKBONE_CONFIG,TRAINING_CONFIG, DATASET_CONFIG
 from data.custom_datasets import EMGCTMDataset
-from models.ctm_emg import ContinuousThoughtMachineEMG
+from models.ctm_emg import EMGContinuousThoughtMachine
 from tasks.emg_phoneme.trainer import EMGCTMTrainer
 
 def main():
@@ -55,7 +55,7 @@ def main():
     )
     
     # Initialize model
-    model = ContinuousThoughtMachineEMG(**EMG_CTM_CONFIG)
+    model = EMGContinuousThoughtMachine(**EMG_CTM_CONFIG)
     
     # Optimizer and scheduler
     optimizer = torch.optim.AdamW(

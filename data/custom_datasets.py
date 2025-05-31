@@ -6,10 +6,9 @@ import numpy as np
 from tqdm.auto import tqdm
 from PIL import Image
 from datasets import load_dataset
+from tasks.emg_phoneme.modules import OnsetDetector, apply_cwt_to_segments, prepare_features_for_ctm
 from tasks.emg_phoneme.utils import preprocess_emg_data,extract_phoneme_for_timewindow_onset_bias
-from ..processing.onset_detection import OnsetDetector
-from ..processing.cwt_processing import apply_cwt_to_segments
-from ..processing.feature_extraction import prepare_features_for_ctm
+
 from typing import List, Dict, Any, Tuple
 import json
 from pathlib import Path

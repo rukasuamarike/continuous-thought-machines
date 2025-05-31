@@ -12,7 +12,7 @@ This package implements a biologically-inspired approach to EMG-based speech rec
 
 ## Quick Start
 ```python 
-from task.emg import EMGCTMDataset, EMGContinuousThoughtMachine, EMGCTMTrainer
+from ... import EMGCTMDataset, EMGContinuousThoughtMachine, EMGCTMTrainer
 # Load data
 dataset = EMGCTMDataset( json_data_path="path/to/data", trial_names=["trial_3", "trial_4"], phoneme_maps=phoneme_mapping )
 # Initialize model
