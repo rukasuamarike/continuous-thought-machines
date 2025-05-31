@@ -32,7 +32,7 @@ def butter_bandpass(data: np.ndarray, lowcut: float, highcut: float,
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, data)
 
-def preprocess_emg_data(emg_file: str, sr: int = 250) -> np.ndarray:
+def preprocess_emg_data(emg_file: str, cfg:dict, sr: int = 250) -> np.ndarray:
     """Preprocess EMG data with filtering and artifact removal"""
     # Load EMG data
     data = np.loadtxt(emg_file, delimiter=',')
@@ -42,8 +42,8 @@ def preprocess_emg_data(emg_file: str, sr: int = 250) -> np.ndarray:
     for ch in range(4):
         chan = emg_data[:, ch]
         chan[0] = chan[1]  # Fix first sample
-        emg_data[:, ch] = remove_spike(chan)
-        emg_data[:, ch] = butter_bandpass(emg_data[:, ch], 0.5, 50, sr)
+        emg_data[:, ch] = remove_spike(chan,cfg['spike_window'],cfg['spike_threshold'])
+        emg_data[:, ch] = butter_bandpass(emg_data[:, ch], cfg['bandpass_low'], cfg['bandpass_high'], sr,cfg['filter_order'])
     
     return emg_data
 
