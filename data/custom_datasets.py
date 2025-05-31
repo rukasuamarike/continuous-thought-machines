@@ -413,7 +413,7 @@ class EMGCTMDataset(Dataset):
         """Process a single EMG file through the complete pipeline"""
         
         # 1. Load and preprocess EMG data
-        emg_data = preprocess_emg_data(emg_file, self.preprocess_config, sr = sr)
+        emg_data = preprocess_emg_data(emg_file, self.preprocess_config)
         
         # 2. Onset detection and segmentation
         onset_results = self.onset_detector.detect_cross_channel_onsets(emg_data)
