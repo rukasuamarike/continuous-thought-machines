@@ -4,6 +4,7 @@ Utilities for EMG phoneme recognition
 
 import numpy as np
 import torch
+from torch.utils.data import Dataset
 from scipy.signal import butter, filtfilt
 import json
 from pathlib import Path
@@ -21,7 +22,7 @@ def remove_spike(data: np.ndarray, w: int = 2, threshold: float = 600) -> np.nda
     return data
 
 def butter_bandpass(data: np.ndarray, lowcut: float, highcut: float, 
-                   fs: int, order: int = 2):
+                   fs: int, order: int = 2) -> np.ndarray:
     """Apply bandpass filter to EMG data"""
     nyq = 0.5 * fs
     low = lowcut / nyq
@@ -29,7 +30,7 @@ def butter_bandpass(data: np.ndarray, lowcut: float, highcut: float,
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, data)
 
-def preprocess_emg_data(emg_file: str, cfg, sr = 250):
+def preprocess_emg_data(emg_file: str, sr: int = 250) -> np.ndarray:
     """Preprocess EMG data with filtering and artifact removal"""
     # Load EMG data
     data = np.loadtxt(emg_file, delimiter=',')
@@ -39,8 +40,8 @@ def preprocess_emg_data(emg_file: str, cfg, sr = 250):
     for ch in range(4):
         chan = emg_data[:, ch]
         chan[0] = chan[1]  # Fix first sample
-        emg_data[:, ch] = remove_spike(chan,cfg['spike_window'],cfg['spike_threshold'])
-        emg_data[:, ch] = butter_bandpass(emg_data[:, ch], cfg['bandpass_low'], cfg['bandpass_high'], sr,cfg['filter_order'])
+        emg_data[:, ch] = remove_spike(chan)
+        emg_data[:, ch] = butter_bandpass(emg_data[:, ch], 0.5, 50, sr)
     
     return emg_data
 
