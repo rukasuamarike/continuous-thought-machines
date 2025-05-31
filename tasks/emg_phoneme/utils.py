@@ -21,7 +21,7 @@ def remove_spike(data: np.ndarray, w: int = 2, threshold: float = 600) -> np.nda
     return data
 
 def butter_bandpass(data: np.ndarray, lowcut: float, highcut: float, 
-                   fs: int, order: int = 2) -> np.ndarray:
+                   fs: int, order: int = 2):
     """Apply bandpass filter to EMG data"""
     nyq = 0.5 * fs
     low = lowcut / nyq
@@ -29,7 +29,7 @@ def butter_bandpass(data: np.ndarray, lowcut: float, highcut: float,
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, data)
 
-def preprocess_emg_data(emg_file: str, cfg, sr: int = 250) -> np.ndarray:
+def preprocess_emg_data(emg_file: str, cfg, sr = 250):
     """Preprocess EMG data with filtering and artifact removal"""
     # Load EMG data
     data = np.loadtxt(emg_file, delimiter=',')
