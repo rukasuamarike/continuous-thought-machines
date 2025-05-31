@@ -4,16 +4,13 @@ Utilities for EMG phoneme recognition
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 from scipy.signal import butter, filtfilt
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 from textgrid import TextGrid
-from scipy import signal as scipy_signal
 import pywt
 import matplotlib.pyplot as plt
-from .modules import OnsetDetector, apply_cwt_to_segments, prepare_features_for_ctm
 
 def remove_spike(data: np.ndarray, w: int = 2, threshold: float = 600) -> np.ndarray:
     """Remove spikes from EMG data"""
