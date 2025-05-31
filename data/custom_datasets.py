@@ -6,6 +6,14 @@ import numpy as np
 from tqdm.auto import tqdm
 from PIL import Image
 from datasets import load_dataset
+from tasks.emg_phoneme.utils import preprocess_emg_data,extract_phoneme_for_timewindow_onset_bias
+from ..processing.onset_detection import OnsetDetector
+from ..processing.cwt_processing import apply_cwt_to_segments
+from ..processing.feature_extraction import prepare_features_for_ctm
+from typing import List, Dict, Any, Tuple
+import json
+from pathlib import Path
+
 
 class SortDataset(Dataset):
     def __init__(self, N):
@@ -322,3 +330,140 @@ class ParityDataset(Dataset):
         cumsum = torch.cumsum(negatives, dim=0)
         target = (cumsum % 2 != 0).to(torch.long)
         return vector, target
+
+class EMGCTMDataset(Dataset):
+    """
+    Dataset class for EMG-CTM training and evaluation
+    
+    Handles the complete pipeline from raw EMG data to CTM-ready features:
+    1. EMG preprocessing (filtering, artifact removal)
+    2. Onset detection and segmentation  
+    3. CWT feature extraction
+    4. Phoneme label extraction from TextGrid files
+    """
+    
+    def __init__(
+        self,
+        json_data_path: str,
+        trial_names: List[str], 
+        phoneme_maps: Dict[str, int],
+        onset_config: Dict[str, Any],
+        cwt_config: Dict[str, Any],
+        preprocess_config: Dict[str, Any],
+        max_segments_per_trial: int = None,
+        transform=None
+    ):
+        self.json_data_path = json_data_path
+        self.trial_names = trial_names
+        self.phoneme_maps = phoneme_maps
+        self.transform = transform
+        self.max_segments_per_trial = max_segments_per_trial
+        
+        # Initialize processing components
+        self.onset_detector = OnsetDetector(**onset_config)
+        self.cwt_config = cwt_config
+        self.preprocess_config = preprocess_config
+        
+        # Load dataset structure
+        self.datasets = self._load_dataset_structure()
+        
+        # Process all files and create segments
+        self.segments, self.labels = self._process_all_files()
+        
+    def _load_dataset_structure(self) -> Dict:
+        """Load JSON dataset structure"""
+        datasets = {}
+        for trial_name in self.trial_names:
+            json_path = Path(self.json_data_path) / f"ds_{trial_name}.json"
+            with open(json_path, 'r') as f:
+                trial_data = json.load(f)
+                datasets[trial_name] = trial_data[trial_name]
+        return datasets
+    
+    def _process_all_files(self) -> Tuple[List[Dict], List[int]]:
+        """Process all EMG files through the complete pipeline"""
+        all_segments = []
+        all_labels = []
+        
+        for trial_name, trial_data in self.datasets.items():
+            emg_files = trial_data['emg_files']
+            textgrid_files = trial_data['text_files']
+            sr = trial_data['sr']
+            
+            for emg_file, textgrid_file in zip(emg_files, textgrid_files):
+                segments, labels = self._process_single_file(
+                    emg_file, textgrid_file, sr
+                )
+                
+                # Limit segments per trial if specified
+                if self.max_segments_per_trial:
+                    segments = segments[:self.max_segments_per_trial]
+                    labels = labels[:self.max_segments_per_trial]
+                
+                all_segments.extend(segments)
+                all_labels.extend(labels)
+        
+        return all_segments, all_labels
+    
+    def _process_single_file(
+        self, 
+        emg_file: str, 
+        textgrid_file: str, 
+        sr: int
+    ) -> Tuple[List[Dict], List[int]]:
+        """Process a single EMG file through the complete pipeline"""
+        
+        # 1. Load and preprocess EMG data
+        emg_data = preprocess_emg_data(emg_file, self.preprocess_config, sr)
+        
+        # 2. Onset detection and segmentation
+        onset_results = self.onset_detector.detect_cross_channel_onsets(emg_data)
+        segments = self.onset_detector.segment_around_onsets(emg_data, onset_results)
+        
+        # 3. CWT processing
+        cwt_features = apply_cwt_to_segments(segments, self.cwt_config, sr)
+        
+        # 4. Prepare CTM-ready features
+        ctm_ready_features = prepare_features_for_ctm(cwt_features)
+        
+        # 5. Extract phoneme labels
+        segment_labels = []
+        for segment_features in ctm_ready_features:
+            segment_info = segment_features['original_segment']
+            start_sample = segment_info['window_start'] 
+            end_sample = segment_info['window_end']
+            
+            phoneme_label = extract_phoneme_for_timewindow_onset_bias(
+                textgrid_file, start_sample, end_sample, sr, self.phoneme_maps
+            )
+            segment_labels.append(phoneme_label)
+            
+        return ctm_ready_features, segment_labels
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Get a single sample"""
+        segment = self.segments[idx]
+        cwt_features = torch.FloatTensor(segment['features'])  # (4, 32, 128)
+        label = torch.LongTensor([self.labels[idx]])
+        
+        if self.transform:
+            cwt_features = self.transform(cwt_features)
+            
+        return cwt_features, label.squeeze(0)
+    
+    def __len__(self) -> int:
+        return len(self.segments)
+    
+    def get_class_distribution(self) -> Dict[str, int]:
+        """Get distribution of phoneme classes"""
+        from collections import Counter
+        label_counts = Counter(self.labels)
+        
+        # Convert back to phoneme names
+        reverse_map = {v: k for k, v in self.phoneme_maps.items()}
+        phoneme_counts = {
+            reverse_map.get(label_id, f'Unknown_{label_id}'): count
+            for label_id, count in label_counts.items()
+        }
+        
+        return phoneme_counts
