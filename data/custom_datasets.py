@@ -413,14 +413,14 @@ class EMGCTMDataset(Dataset):
         """Process a single EMG file through the complete pipeline"""
         
         # 1. Load and preprocess EMG data
-        emg_data = preprocess_emg_data(emg_file, self.preprocess_config,sr=sr)
+        emg_data = preprocess_emg_data(emg_file, self.preprocess_config, sr=sr)
         
         # 2. Onset detection and segmentation
         onset_results = self.onset_detector.detect_cross_channel_onsets(emg_data)
         segments = self.onset_detector.segment_around_onsets(emg_data, onset_results)
         
         # 3. CWT processing
-        cwt_features = apply_cwt_to_segments(segments, self.cwt_config, sr)
+        cwt_features = apply_cwt_to_segments(segments, sr=sr)
         
         # 4. Prepare CTM-ready features
         ctm_ready_features = prepare_features_for_ctm(cwt_features)
